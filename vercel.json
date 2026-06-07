@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "routes": [
+    { "src": "/email/send", "dest": "/api/email/send" },
+    { "src": "/(.*)", "status": 404, "dest": "/api/email/send" }
+  ],
+  "functions": {
+    "api/email/send.js": {
+      "maxDuration": 30
+    }
+  }
+}
