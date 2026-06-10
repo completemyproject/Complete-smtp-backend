@@ -243,7 +243,7 @@ function buildQuoteSubmittedUserEmail({ name, email, enquiryId, projectType, pos
     </table>
     <div class="divider"></div>
     <p><strong>What happens next:</strong></p>
-    <p>We'll match your project with vetted contractors in your area. You can expect <strong>up to 3 quotes within 24 hours</strong>.</p>
+    <p>We've received your project details. Our vetted multi-trade companies will review your project, and you may be contacted by up to three suitable companies within 48 hours to discuss your project. Good luck.</p>
   `);
   return { to: email, subject, text, html };
 }
