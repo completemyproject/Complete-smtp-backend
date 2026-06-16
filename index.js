@@ -1,6 +1,7 @@
 import http from 'node:http';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
+import { appendCustomerEnquiry, updateEnquiryStatus } from './googleSheets.js';
 
 dotenv.config();
 
@@ -206,6 +207,59 @@ function buildPartnershipAdminEmail({ name, email, phone, company, partnerType, 
     </p>
   `);
   return { to: ADMIN_EMAIL, subject, text, html };
+}
+
+function buildReferralUserEmail({ referrerName, referrerEmail, clientName }) {
+  const subject = `Thanks for your referral!`;
+  const text = `Hi ${referrerName},\n\nThanks for referring ${clientName} to Complete My Project! We'll be in touch with them shortly, and we'll let you know once your referral has been reviewed.\n\nBest regards,\nComplete My Project`;
+  const html = buildLayout(subject, `
+    <p>Hi <strong>${referrerName}</strong>,</p>
+    <p>Thanks for referring <strong>${clientName}</strong> to Complete My Project! We'll be in touch with them shortly.</p>
+    <div class="divider"></div>
+    <p>We'll email you again once your referral has been reviewed.</p>
+  `);
+  return { to: referrerEmail, subject, text, html };
+}
+
+function buildReferralAdminEmail({ referrerName, referrerEmail, clientName, clientEmail, clientPhone }) {
+  const subject = `New referral — ${clientName}`;
+  const text = `New referral submission\n\nReferrer: ${referrerName} (${referrerEmail})\n\nClient: ${clientName}\nClient email: ${clientEmail}\nClient phone: ${clientPhone}`;
+  const html = buildLayout(subject, `
+    <div class="badge">New Referral</div>
+    <p><strong>A new referral has been submitted:</strong></p>
+    <table>
+      <tr><td>Referrer</td><td>${referrerName}</td></tr>
+      <tr><td>Referrer Email</td><td><a href="mailto:${referrerEmail}" style="color: #1A8D93; text-decoration: none;">${referrerEmail}</a></td></tr>
+      <tr><td>Client</td><td><strong>${clientName}</strong></td></tr>
+      <tr><td>Client Email</td><td><a href="mailto:${clientEmail}" style="color: #1A8D93; text-decoration: none;">${clientEmail}</a></td></tr>
+      <tr><td>Client Phone</td><td>${clientPhone}</td></tr>
+    </table>
+    <p style="margin-top: 24px; text-align: center;">
+      <a href="${APP_URL}/admin" class="cta-button" style="display:inline-block;background:#1A8D93;color:#ffffff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;font-family:Arial,sans-serif;">Review in admin</a>
+    </p>
+  `);
+  return { to: ADMIN_EMAIL, subject, text, html };
+}
+
+function buildReferralStatusUpdatedEmail({ referrerName, referrerEmail, clientName, status }) {
+  const accepted = status === 'accepted';
+  const subject = accepted
+    ? `Great news — your referral was accepted!`
+    : `Update on your referral for ${clientName}`;
+  const text = accepted
+    ? `Hi ${referrerName},\n\nGreat news — your referral for ${clientName} has been accepted. Thanks for spreading the word about Complete My Project!\n\nBest regards,\nComplete My Project`
+    : `Hi ${referrerName},\n\nWe've reviewed your referral for ${clientName}. Its current status is now: ${status}.\n\nBest regards,\nComplete My Project`;
+  const html = buildLayout(subject, `
+    <p>Hi <strong>${referrerName}</strong>,</p>
+    ${accepted
+      ? `<p>Great news — your referral for <strong>${clientName}</strong> has been <strong>accepted</strong>. Thanks for spreading the word about Complete My Project!</p>`
+      : `<p>We've reviewed your referral for <strong>${clientName}</strong>. Its current status is now: <strong>${status}</strong>.</p>`}
+    <div class="divider"></div>
+    <p style="text-align: center; margin-top: 24px;">
+      <a href="${APP_URL}" class="cta-button" style="display:inline-block;background:#1A8D93;color:#ffffff;padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px;font-family:Arial,sans-serif;">Visit Complete My Project</a>
+    </p>
+  `);
+  return { to: referrerEmail, subject, text, html };
 }
 
 function buildSmtpTestEmail() {
@@ -468,6 +522,24 @@ async function handleRequest(req, res) {
         mailPromises.push(sendMail(buildPartnershipUserEmail({ name, email, company, partnerType })));
         break;
       }
+      case 'referral_submitted': {
+        const referrerName = asString(data.referrerName, 'referrerName');
+        const referrerEmail = asString(data.referrerEmail, 'referrerEmail');
+        const clientName = asString(data.clientName, 'clientName');
+        const clientEmail = asString(data.clientEmail, 'clientEmail');
+        const clientPhone = asString(data.clientPhone, 'clientPhone');
+        mailPromises.push(sendMail(buildReferralAdminEmail({ referrerName, referrerEmail, clientName, clientEmail, clientPhone })));
+        mailPromises.push(sendMail(buildReferralUserEmail({ referrerName, referrerEmail, clientName })));
+        break;
+      }
+      case 'referral_status_updated': {
+        const referrerName = asString(data.referrerName, 'referrerName');
+        const referrerEmail = asString(data.referrerEmail, 'referrerEmail');
+        const clientName = asString(data.clientName, 'clientName');
+        const status = asString(data.status, 'status');
+        mailPromises.push(sendMail(buildReferralStatusUpdatedEmail({ referrerName, referrerEmail, clientName, status })));
+        break;
+      }
       case 'quote_submitted': {
         const enquiryId = asString(data.enquiryId, 'enquiryId');
         const name = asString(data.name, 'name');
@@ -476,8 +548,18 @@ async function handleRequest(req, res) {
         const projectType = asString(data.projectType, 'projectType');
         const postcode = asString(data.postcode, 'postcode');
         const description = asString(data.description, 'description');
+        const marketingOptIn = data.marketingOptIn === true;
         mailPromises.push(sendMail(buildQuoteSubmittedUserEmail({ name, email, enquiryId, projectType, postcode })));
         mailPromises.push(sendMail(buildQuoteSubmittedAdminEmail({ name, email, enquiryId, projectType, postcode, description })));
+        appendCustomerEnquiry({ enquiryId, name, email, phone, postcode, projectType, description, marketingOptIn }).catch((err) => {
+          console.error('[googleSheets] Failed to append enquiry:', err);
+        });
+        break;
+      }
+      case 'quote_status_updated': {
+        const enquiryId = asString(data.enquiryId, 'enquiryId');
+        const status = asString(data.status, 'status');
+        mailPromises.push(updateEnquiryStatus({ enquiryId, status }));
         break;
       }
       case 'account_pending_review': {
